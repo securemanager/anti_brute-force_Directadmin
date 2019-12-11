@@ -1,0 +1,54 @@
+#!/bin/sh
+
+BF=/root/blocked_ips.txt;
+EF=/root/exempt_ips.txt;
+UNBLOCKED=0;
+
+if [ -z "${ip}" ];
+then
+    echo "[ERROR] We've got no IP to unblock! Terminating...";
+    exit 1;
+fi;
+
+if [ ! -x "/usr/sbin/csf" ];
+then
+    echo "[ERROR] CSF/LFD was not found on your server! Terminating...";
+    exit 2;
+fi;
+
+##
+## IN SOME CASES THE IP MIGHT BE MISSING IN CSF/LFD
+## AND STILL EXIST IN /root/blocked_ips.txt
+## SO WE SHOULD REMOVE IT FROM THE FILE 
+## TO LET DIRECTADMIN DO ITS JOB
+## AND AVOID LOOPS
+##
+c=`grep "^${ip}=" ${BF} -c`
+if [ "${c}" -gt "0" ];
+then
+    echo "[OK] The IP ${ip} was found as blocked in ${BF}";
+    #echo "[OK] Removing ${ip} from ${BF}";
+    cat ${BF} | grep -v "^${ip}=" > ${BF}.temp
+    mv ${BF}.temp ${BF}
+    UNBLOCKED=1;
+fi;
+
+c=`/usr/sbin/csf -g ${ip} | grep 'csf.deny' -c`;
+if [ "${c}" -gt "0" ];
+then
+    echo "[OK] The IP ${ip} was found as blocked in CSF/LFD";
+    #echo "[OK] Unblocking ${ip} from CSF/LFD";
+    /usr/sbin/csf -dr ${ip} >/dev/null 2>&1;
+    UNBLOCKED=1;
+fi;
+
+if [ "${UNBLOCKED}" -gt "0" ];
+then
+    echo "[OK] The IP ${ip} was unblocked";
+    exit 0;
+else
+    echo "[WARNING] The IP ${ip} is not blocked. Terminating...";
+    exit 3;
+fi;
+
+exit;

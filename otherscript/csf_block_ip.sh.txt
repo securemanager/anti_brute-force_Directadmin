@@ -1,0 +1,87 @@
+#!/bin/sh
+
+BF="/root/blocked_ips.txt";
+EF="/root/exempt_ips.txt";
+SLF="/usr/local/directadmin/data/admin/brute_skip.list";
+CAF="/etc/csf/csf.allow";
+
+if [ -z "${ip}" ];
+then
+    echo "[ERROR] We've got no IP to block! Terminating...";
+    exit 1;
+fi;
+
+if [ ! -x "/usr/sbin/csf" ];
+then
+    echo "[ERROR] CSF/LFD was not found on your server! Terminating...";
+    exit 2;
+fi;
+
+[ -e "${BF}" ] || touch "${BF}";
+[ -e "${EF}" ] || touch "${EF}";
+
+# Is the IP whitelisted by Directadmin?
+c=`grep -c "^${ip}\$" ${EF}`;
+if [ "${c}" -gt 0 ];
+then
+    echo "[WARNING] The IP ${ip} is whitelisted in ${EF}. Not going to block it...";
+    exit 3;
+fi;
+
+# Is the IP added into a skiplist by Directadmin?
+if [ -f ${SLF} ];
+then
+    c=`egrep -c "^${ip}=" ${SLF}`;
+    if [ "${c}" -gt 0 ];
+    then
+        echo "[WARNING] The IP ${ip} is whitelisted in ${SLF}. Not going to block it...";
+        exit 4;
+    fi;
+fi;
+
+# Is the IP whitelisted by CSF?
+c=`egrep -c "^${ip}\$|^{ip}\ " ${CAF}`;
+if [ "${c}" -gt 0 ];
+then
+    echo "[WARNING] The IP ${ip} is whitelisted in ${CAF}. Not going to block it...";
+    exit 5;
+fi;
+
+# The IP is already blocked in CSF/LFD
+# We do not want the IP to be managed by BFM in this case
+c=`/usr/sbin/csf -g ${ip} | grep 'csf.deny' -c`;
+if [ "${c}" -gt 0 ];
+then
+    echo -n "[WARNING] The IP ${ip} is already blocked:";
+    /usr/sbin/csf -g ${ip} | grep 'csf.deny';
+    exit 6;
+fi;
+
+TF=$(mktemp);
+/usr/sbin/csf -d $ip "Blocked with Directadmin Brute Force Manager" > ${TF} 2>&1;
+
+c=`grep " DENY_IP_LIMIT " ${TF} -c`;
+if [ "${c}" -gt 0 ];
+then
+    ip2=`cat ${TF} | grep " DENY_IP_LIMIT " --after=1 | tail -1 | awk '{print $1}'`;
+    echo -n "[WARNING] DENY_IP_LIMIT was met in CSF. ";
+    if [ ! -z "${ip2}" ];
+    then
+        cat ${BF} | grep -v "^${ip2}=" > ${BF}.temp;
+        mv ${BF}.temp ${BF};
+        echo "The IP ${ip2} was removed from ban list.";
+    else
+        echo "";
+    fi;
+fi;
+
+c=`/usr/sbin/csf -g ${ip} | grep 'csf.deny' -c`;
+if [ "${c}" -gt 0 ];
+then
+    echo "[OK] The IP ${ip} was blocked with CSF.";
+    echo "${ip}=dateblocked=`date +%s`" >> ${BF};
+fi;
+
+[ ! -f "${TF}" ] || rm -f ${TF};
+
+exit 0;
